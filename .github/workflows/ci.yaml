@@ -1,0 +1,87 @@
+# De naam die je ziet in de GitHub Actions tab. "ci" = Continuous Integration:
+# automatisch checken of nieuwe code niets stuk maakt.
+# Voorbeeld: in de "Actions"-tab van je repo zie je runs heten "ci #42".
+name: ci
+
+# Wanneer moet dit draaien?
+# - pull_request: elke keer als iemand een pull request opent/bijwerkt (vóór mergen).
+#   Voorbeeld: je maakt een PR "fix-login-bug" vanaf je feature-branch -> workflow start automatisch.
+# - push naar main: elke keer als er rechtstreeks naar main gepusht wordt.
+#   Voorbeeld: een PR wordt gemerged in main, of iemand doet "git push origin main" -> workflow start.
+on:
+    pull_request:
+    push:
+        branches: [main]
+
+# De workflow krijgt alleen toestemming om de code te lezen, niet om iets terug
+# te schrijven naar de repo. Minder rechten dan nodig = veiliger.
+# Voorbeeld: als deze workflow gehackt/misbruikt wordt (bv. via een kwaadaardige
+# dependency), kan die nog steeds geen commits pushen, branches verwijderen of
+# releases aanmaken, want dat recht heeft hij simpelweg niet.
+permissions:
+    contents: read
+
+# Als je snel achter elkaar pusht, zou GitHub meerdere runs tegelijk starten.
+# Dit groepeert runs per branch en stopt automatisch de oudere run zodra er
+# een nieuwere is — zo wordt alleen je laatste code getest (bespaart tijd).
+# Voorbeeld: je pusht 3x snel na elkaar naar "feature-x" (kleine typo-fixes).
+# Zonder dit draaien er 3 volledige testruns; met dit stopt run 1 en 2 zodra
+# run 3 begint, en zie je alleen het resultaat van de laatste push.
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+
+jobs:
+    # De eigenlijke taak: "test of alles werkt."
+    test:
+        strategy:
+            # Als de test met Node 22 faalt, stop dan niet meteen de test met Node 24.
+            # Laat ze allebei afmaken zodat je in één keer alle problemen ziet.
+            # Voorbeeld: Node 22 faalt door een typo in je code, Node 24 faalt door een
+            # verwijderde API. Met fail-fast:false zie je beide fouten in dezelfde run,
+            # in plaats van alleen de eerste en dan de tweede fout pas een run later.
+            fail-fast: false
+            matrix:
+                # Test de code twee keer: één keer met Node.js 22, één keer met 24.
+                # Zo weet je zeker dat de app op beide versies goed draait.
+                # Voorbeeld: dit maakt twee losse jobs, "test (22)" en "test (24)",
+                # die je los van elkaar ziet slagen of falen in de Actions-tab.
+                node: [22,24]
+        # De testen draaien op een tijdelijke virtuele computer met Linux (Ubuntu).
+        # Voorbeeld: elke run krijgt een "verse" machine, alsof je elke keer een
+        # nieuwe laptop uitpakt — niets van een vorige run blijft erin hangen.
+        runs-on: ubuntu-latest
+        steps:
+            # Haalt je code binnen op die tijdelijke computer.
+            # Zonder deze stap is er geen code om te testen.
+            # Voorbeeld: dit is het equivalent van "git clone" van jouw repo
+            # op die lege Ubuntu-machine.
+            - name: check out source
+              uses: actions/checkout@v7
+
+            # Installeert de juiste Node.js-versie (22 of 24, afhankelijk van welke
+            # matrix-run dit is) en zet caching aan zodat herhaalde runs sneller gaan.
+            # Voorbeeld: "cache: npm" bewaart je node_modules-cache tussen runs, zodat
+            # "npm ci" de volgende keer in bv. 20 sec klaar is i.p.v. 2 minuten.
+            - name: setup node js
+              uses: actions/setup-node@v7
+
+              with:
+                node-version:  ${{ matrix.node }}
+                cache: npm
+
+            # "npm ci" (niet "npm install") installeert precies wat in
+            # package-lock.json staat. Zo krijg je altijd dezelfde versies,
+            # in plaats van dat afhankelijkheden stilletjes kunnen afwijken.
+            # Voorbeeld: op jouw laptop staat lodash 4.17.21 vast in de lockfile.
+            # "npm ci" installeert exact die versie; "npm install" zou een nieuwere
+            # 4.17.x kunnen pakken en dus een andere omgeving testen dan je lokaal hebt.
+            - name: install locked dependencies
+              run: npm ci
+
+            # Draait de testen van het project — dit is waar de hele workflow om draait.
+            # Voorbeeld: dit voert het "test"-script uit package.json uit (bv. jest of vitest).
+            # Faalt er één test, dan slaagt deze stap niet en krijg je een rood kruisje op de PR.
+            - name: run tests
+              run: npm test
